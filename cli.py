@@ -15,7 +15,7 @@ def main():
         print("5. Check if the device is rooted")
         print("6. Reboot the device into bootloader")
         print("7. Install an APK")
-        print("8. Exit")
+        print("8. Close")
 
         choice = input("Enter your choice (1-8): ")
 
