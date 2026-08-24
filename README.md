@@ -1,74 +1,67 @@
-# ADB Fastboot Tool  
+# ADB Commander
 
-A powerful and easy-to-use tool for managing Android devices using **ADB (Android Debug Bridge)** and **Fastboot**. This project includes both a **GUI** (built with PyQt6) and a **console-based CLI**, making it accessible for both beginners and advanced users.  
+A lightweight desktop and CLI utility for common Android Debug Bridge (ADB) workflows.
 
+## Features
 
-## Features  
+- Detects connected, unauthorized, and offline Android devices reliably.
+- Shows device identity, Android version, storage usage, battery diagnostics, and root status.
+- Installs and uninstalls APK packages.
+- Lists installed applications.
+- Reboots devices into bootloader or recovery mode.
+- Captures PNG screenshots directly from `adb exec-out`.
+- Records the device screen and pulls the resulting MP4 to the host.
+- Runs GUI ADB operations in background Qt workers so the interface remains responsive.
+- Provides a reusable, testable `ADBManager` command layer shared by the CLI and GUI.
 
-✅ **GUI & CLI Support** – Use either the graphical interface or the command-line tool.  
-✅ **Device Management** – Check device connection, storage, battery, and root status.  
-✅ **App Management** – Install, list, and uninstall APKs with ease.  
-✅ **Screen Utilities** – Capture screenshots and record screen videos.  
-✅ **Reboot Options** – Reboot into bootloader, recovery, or system mode.  
-✅ **Fast & Efficient** – No command-line knowledge required for GUI users!
+## Requirements
 
+- Python 3.10+
+- Android SDK Platform Tools (`adb`) installed and available on `PATH`
+- PyQt6 for the GUI
 
----
+Install the Python dependency:
 
-## Installation  
-
-### Prerequisites  
-Ensure you have **ADB & Fastboot** installed. If not, install them using:  
-
-- **Windows**: [Download ADB & Fastboot](https://developer.android.com/studio/releases/platform-tools)  
-- **Linux/macOS**: Install via package manager:  
-  ```bash
-  sudo apt install adb fastboot  # Debian/Ubuntu
-  brew install android-platform-tools  # macOS
-  ```
-
-### Enable USB Debugging  
-You need to **enable USB debugging** on your Android device for this tool to work.  
-
-1. **Go to Settings** on your Android device.  
-2. Scroll down and tap **About phone**.  
-3. Find **Build number** and tap it **7 times** to enable **Developer options**.  
-4. Go back to **Settings** and open **Developer options**.  
-5. Scroll down and enable **USB debugging**.  
-6. When you connect your phone to the computer, select **"Allow USB Debugging"** when prompted.  
-
-Now your device should be detected by ADB! 🚀  
-
----
-
-### Clone the Repository  
 ```bash
-git clone https://github.com/yourusername/adb-fastboot-tool.git
-cd adb-fastboot-tool
+python -m pip install -r requirements.txt
 ```
 
+Install ADB / Platform Tools from the official Android documentation:
 
-## Usage  
+https://developer.android.com/tools/releases/platform-tools
 
-### GUI Version (PyQt6)  
-Run the GUI with:  
+## Run
+
+CLI:
+
 ```bash
-python ui/ui.py
+python main_CLI.py
 ```
-A modern UI will open, allowing you to manage your Android device without using the command line.
 
-### Console (CLI) Version  
-Run the CLI tool with:  
+GUI:
+
 ```bash
-python cli.py
+python main_GUI.py
 ```
-Follow the on-screen prompts to execute ADB and Fastboot commands easily.
 
----
-## Contributing  
-Feel free to open an issue or submit a pull request if you want to improve this tool!  
+You can also inspect the ADB layer directly:
 
----
+```bash
+python -m functions.adb_commands
+```
 
-## License  
-This project is licensed under the **MIT License**.  
+## Testing
+
+The command layer is tested with mocked ADB subprocesses, so the test suite does not require a physical Android device or a locally installed ADB executable.
+
+```bash
+python -m pytest
+```
+
+## Notes
+
+Enable USB debugging on the Android device and accept the computer's RSA authorization prompt before running device operations. Some operations, particularly screen recording and package management, may require additional Android permissions or may vary slightly by vendor ROM.
+
+## License
+
+MIT
