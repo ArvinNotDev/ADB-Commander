@@ -1,78 +1,113 @@
+"""Interactive command-line interface for ADB Commander."""
+
+from __future__ import annotations
+
+from pathlib import Path
 import shutil
-from functions.adb_commands import ADBManager
+
+from functions.adb_commands import ADBError, ADBManager
 
 
 class ADBCLI:
-    def __init__(self):
-        if not self.check_adb_installed():
-            raise EnvironmentError(
-                "ADB (Android Debug Bridge) is not installed or not in PATH.\n"
-                "Please install ADB and make sure it's accessible from the command line."
-            )
-        self.adb = ADBManager()
-        self.device_connected = self.adb.get_permission()
+    """Small, defensive CLI around :class:`ADBManager`."""
 
-    @staticmethod
-    def check_adb_installed() -> bool:
-        """Check if adb is available in PATH."""
-        return shutil.which("adb") is not None
+    def __init__(self, adb: ADBManager | None = None) -> None:
+        if not shutil.which("adb") and adb is None:
+            raise EnvironmentError("ADB is not installed or not available in PATH.")
+        self.adb = adb or ADBManager()
+        self.device_serial: str | None = None
 
-    def update_device_status(self):
-        """Update the device connection status."""
-        self.device_connected = self.adb.get_permission()
-        if not self.device_connected:
-            print("No devices connected.")
+    def update_device_status(self) -> bool:
+        """Refresh the selected device and report its state."""
+        devices = self.adb.get_devices()
+        ready = [device for device in devices if device.ready]
+        self.device_serial = ready[0].serial if ready else None
+        if not ready:
+            print("No authorized Android devices connected.")
+            for device in devices:
+                print(f"- {device.serial}: {device.state}")
+            return False
+        print(f"Connected device: {self.device_serial}")
+        return True
 
-    def run(self):
-        """Main CLI loop."""
+    def _print_result(self, action) -> None:
+        try:
+            result = action()
+            print(result if result is not None else "Done.")
+        except ADBError as exc:
+            print(f"Error: {exc}")
+
+    def run(self) -> None:
+        """Run the interactive menu until the user exits."""
         self.update_device_status()
-        if not self.device_connected:
-            return
 
         while True:
-            print("\nSelect an option:")
-            print("1. Check if device is connected")
-            print("2. Check storage status")
-            print("3. Check battery status")
-            print("4. Check SD card status")
-            print("5. Check if the device is rooted")
-            print("6. Reboot the device into bootloader")
-            print("7. Install an APK")
-            print("8. Close")
+            print(
+                "\nADB Commander\n"
+                "1. Device status\n"
+                "2. Device information\n"
+                "3. Storage status\n"
+                "4. Battery status\n"
+                "5. SD card status\n"
+                "6. Root status\n"
+                "7. Reboot bootloader\n"
+                "8. Reboot recovery\n"
+                "9. Install APK\n"
+                "10. List installed apps\n"
+                "11. Uninstall app\n"
+                "12. Capture screenshot\n"
+                "13. Record screen\n"
+                "0. Exit"
+            )
+            choice = input("Select an option: ").strip()
 
-            choice = input("Enter your choice (1-8): ")
-
-            if choice != '1':
+            if choice == "0":
+                print("Exiting...")
+                return
+            if choice == "1":
                 self.update_device_status()
-                if not self.device_connected:
+            elif choice == "2":
+                self._print_result(lambda: self.adb.get_device_info(self.device_serial))
+            elif choice == "3":
+                self._print_result(lambda: self.adb.storage_status(self.device_serial))
+            elif choice == "4":
+                self._print_result(lambda: self.adb.battery_status(self.device_serial))
+            elif choice == "5":
+                self._print_result(lambda: "SD card found." if self.adb.is_there_any_sd(self.device_serial) else "No SD card detected.")
+            elif choice == "6":
+                self._print_result(lambda: "Device is rooted." if self.adb.is_device_rooted(self.device_serial) else "Device is not rooted.")
+            elif choice == "7":
+                self._print_result(lambda: self.adb.reboot_device_to_bootloader(self.device_serial))
+                self.device_serial = None
+            elif choice == "8":
+                self._print_result(lambda: self.adb.reboot_device_to_recovery(self.device_serial))
+                self.device_serial = None
+            elif choice == "9":
+                apk = input("APK path: ").strip()
+                self._print_result(lambda: self.adb.install_apk(apk, self.device_serial))
+            elif choice == "10":
+                self._print_result(lambda: self.adb.list_installed_apps(self.device_serial))
+            elif choice == "11":
+                package = input("Package name: ").strip()
+                self._print_result(lambda: self.adb.uninstall_app(package, self.device_serial))
+            elif choice == "12":
+                output = input("Output PNG path: ").strip()
+                if output:
+                    self._print_result(lambda: self.adb.capture_screenshot(output, self.device_serial))
+            elif choice == "13":
+                output = input("Output MP4 path: ").strip()
+                try:
+                    duration = int(input("Duration in seconds (1-3600): ").strip())
+                except ValueError:
+                    print("Duration must be an integer.")
                     continue
-
-            match choice:
-                case '1':
-                    print("Device connected." if self.device_connected else "No devices connected.")
-                case '2':
-                    print(self.adb.storage_status())
-                case '3':
-                    print(self.adb.battery_status())
-                case '4':
-                    self.adb.is_there_any_sd()
-                case '5':
-                    print("Device is rooted." if self.adb.is_device_rooted() else "Device is not rooted.")
-                case '6':
-                    print(self.adb.reboot_device_to_bootloader())
-                case '7':
-                    apk_path = input("Enter the full path of the APK file: ")
-                    print(self.adb.install_apk(apk_path))
-                case '8':
-                    print("Exiting...")
-                    break
-                case _:
-                    print("Invalid choice, please try again.")
+                self._print_result(lambda: self.adb.record_screen(output, duration, self.device_serial))
+            else:
+                print("Invalid choice.")
 
 
 if __name__ == "__main__":
     try:
-        cli_app = ADBCLI()
-        cli_app.run()
-    except EnvironmentError as e:
-        print(e)
+        ADBCLI().run()
+    except EnvironmentError as exc:
+        print(f"Error: {exc}")

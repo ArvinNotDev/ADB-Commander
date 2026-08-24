@@ -1,12 +1,15 @@
-import sys
-import os
-from PyQt6.QtWidgets import QApplication
+"""PyQt6 entry point for ADB Commander."""
 
-sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
+from __future__ import annotations
+
+import sys
+
+from PyQt6.QtWidgets import QApplication
 
 from ui.ui import ADBFastbootUI
 
-if __name__ == '__main__':
+
+if __name__ == "__main__":
     app = QApplication(sys.argv)
     window = ADBFastbootUI()
     window.show()

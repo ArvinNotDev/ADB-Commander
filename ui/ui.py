@@ -1,189 +1,182 @@
-import sys
-import os
-from PyQt6.QtWidgets import (
-    QApplication, QWidget, QVBoxLayout, QGridLayout,
-    QPushButton, QTextEdit, QFileDialog, QProgressBar, QInputDialog
-)
-from PyQt6.QtCore import Qt, QTimer
-from PyQt6.QtGui import QIcon
+"""PyQt6 graphical interface for ADB Commander."""
 
-# Ensure parent directory is in sys.path
-sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
-from functions.adb_commands import ADBManager
+from __future__ import annotations
+
+from pathlib import Path
+
+from PyQt6.QtCore import QObject, QRunnable, Qt, QThreadPool, pyqtSignal, pyqtSlot
+from PyQt6.QtWidgets import (
+    QFileDialog,
+    QGridLayout,
+    QInputDialog,
+    QLabel,
+    QMessageBox,
+    QProgressBar,
+    QPushButton,
+    QTextEdit,
+    QVBoxLayout,
+    QWidget,
+)
+
+from functions.adb_commands import ADBError, ADBManager
+
+
+class WorkerSignals(QObject):
+    """Signals emitted by background workers."""
+
+    finished = pyqtSignal(object)
+    error = pyqtSignal(str)
+
+
+class Worker(QRunnable):
+    """Execute a callable without blocking the Qt event loop."""
+
+    def __init__(self, fn) -> None:
+        super().__init__()
+        self.fn = fn
+        self.signals = WorkerSignals()
+
+    @pyqtSlot()
+    def run(self) -> None:
+        try:
+            self.signals.finished.emit(self.fn())
+        except Exception as exc:  # noqa: BLE001 - report all worker errors to the GUI
+            self.signals.error.emit(str(exc))
 
 
 class ADBFastbootUI(QWidget):
-    def __init__(self):
+    """Desktop interface for common ADB operations."""
+
+    def __init__(self) -> None:
         super().__init__()
-        try:
-            self.adb = ADBManager()
-        except EnvironmentError as e:
-            raise SystemExit(str(e))
-        self.init_ui()
+        self.adb = ADBManager()
+        self.thread_pool = QThreadPool.globalInstance()
+        self.active_workers = 0
+        self._build_ui()
 
-    def init_ui(self):
-        self.setWindowTitle("ADB Fastboot Tool")
-        self.setGeometry(200, 200, 800, 600)
-        self.setStyleSheet("background-color: #1e1e1e; color: white; font-size: 14px;")
+    def _build_ui(self) -> None:
+        self.setWindowTitle("ADB Commander")
+        self.resize(900, 650)
 
-        main_layout = QVBoxLayout()
-        self.setLayout(main_layout)
+        layout = QVBoxLayout(self)
 
-        # Output box
-        self.output_box = QTextEdit(self)
-        self.output_box.setReadOnly(True)
-        self.output_box.setStyleSheet("background-color: #2d2d2d; border-radius: 5px; padding: 5px;")
-        main_layout.addWidget(self.output_box)
+        self.device_label = QLabel("Device: checking...")
+        layout.addWidget(self.device_label)
 
-        # Progress bar
-        self.progress_bar = QProgressBar(self)
-        self.progress_bar.setRange(0, 100)
-        self.progress_bar.setValue(0)
+        self.output_box = QTextEdit(readOnly=True)
+        self.output_box.setPlaceholderText("ADB output will appear here.")
+        layout.addWidget(self.output_box)
+
+        self.progress_bar = QProgressBar()
+        self.progress_bar.setRange(0, 0)
         self.progress_bar.setVisible(False)
-        self.progress_bar.setStyleSheet("""
-            QProgressBar {
-                border: 2px solid #555;
-                border-radius: 5px;
-                text-align: center;
-            }
-            QProgressBar::chunk {
-                background-color: #05B8CC;
-                width: 20px;
-            }
-        """)
-        main_layout.addWidget(self.progress_bar)
+        layout.addWidget(self.progress_bar)
 
-        # Button grid
-        button_layout = QGridLayout()
-        main_layout.addLayout(button_layout)
+        grid = QGridLayout()
+        layout.addLayout(grid)
 
-        buttons = {
-            "Check Device": self._get_permission,
-            "Storage Status": self._storage_status,
-            "Battery Status": self._battery_status,
-            "SD Card": self._is_there_any_sd,
-            "Root Status": self._is_device_rooted,
-            "Reboot Bootloader": self._reboot_device_to_bootloader,
-            "Reboot Recovery": self._reboot_device_to_recovery,
-            "Install APK": self._install_apk,
-            "List Apps": self._list_installed_apps,
-            "Uninstall App": self._uninstall_app,
-            "Screenshot": self._capture_screenshot,
-            "Record Screen": self._record_screen
-        }
+        actions = [
+            ("Device Status", self._get_device_status),
+            ("Device Info", lambda: self._run(self.adb.get_device_info)),
+            ("Storage Status", lambda: self._run(self.adb.storage_status)),
+            ("Battery Status", lambda: self._run(self.adb.battery_status)),
+            ("SD Card", lambda: self._run(lambda: "SD card found." if self.adb.is_there_any_sd() else "No SD card detected.")),
+            ("Root Status", lambda: self._run(lambda: "Device is rooted." if self.adb.is_device_rooted() else "Device is not rooted.")),
+            ("Reboot Bootloader", lambda: self._run(self.adb.reboot_device_to_bootloader)),
+            ("Reboot Recovery", lambda: self._run(self.adb.reboot_device_to_recovery)),
+            ("Install APK", self._install_apk),
+            ("List Apps", lambda: self._run(self.adb.list_installed_apps)),
+            ("Uninstall App", self._uninstall_app),
+            ("Screenshot", self._capture_screenshot),
+            ("Record Screen", self._record_screen),
+        ]
 
-        row, col = 0, 0
-        for label, func in buttons.items():
-            btn = QPushButton(label)
-            btn.setStyleSheet("""
-                QPushButton {
-                    background-color: #3a3a3a;
-                    border-radius: 5px;
-                    padding: 10px;
-                }
-                QPushButton:hover {
-                    background-color: #05B8CC;
-                }
-            """)
-            btn.clicked.connect(func)
-            button_layout.addWidget(btn, row, col)
-            col += 1
-            if col > 2:
-                col = 0
-                row += 1
+        for index, (label, callback) in enumerate(actions):
+            button = QPushButton(label)
+            button.clicked.connect(callback)
+            grid.addWidget(button, index // 3, index % 3)
 
-    # ----------------- Utility -----------------
-    def _show_progress(self, show: bool):
-        self.progress_bar.setVisible(show)
-        self.progress_bar.setValue(0 if show else 100)
+        self._get_device_status()
 
-    def _start_progress(self, duration=1000):
-        """Non-blocking progress using QTimer"""
-        self.progress_bar.setVisible(True)
-        self.progress_bar.setValue(0)
-        self.timer_value = 0
-        self.timer = QTimer()
-        self.timer.timeout.connect(lambda: self._update_progress(duration))
-        self.timer.start(10)
+    def _set_busy(self, busy: bool) -> None:
+        self.progress_bar.setVisible(busy)
+        for button in self.findChildren(QPushButton):
+            button.setEnabled(not busy)
 
-    def _update_progress(self, duration):
-        self.timer_value += 1
-        progress = min(int((self.timer_value / (duration / 10)) * 100), 100)
-        self.progress_bar.setValue(progress)
-        if progress >= 100:
-            self.timer.stop()
-            self.progress_bar.setVisible(False)
+    def _run(self, fn) -> None:
+        self.active_workers += 1
+        self._set_busy(True)
+        worker = Worker(fn)
+        worker.signals.finished.connect(self._worker_finished)
+        worker.signals.error.connect(self._worker_error)
+        self.thread_pool.start(worker)
 
-    def _display_output(self, text):
+    @pyqtSlot(object)
+    def _worker_finished(self, result) -> None:
+        self.active_workers = max(0, self.active_workers - 1)
+        self._set_busy(self.active_workers > 0)
+        self._display_output(str(result))
+        self._refresh_device_label()
+
+    @pyqtSlot(str)
+    def _worker_error(self, message: str) -> None:
+        self.active_workers = max(0, self.active_workers - 1)
+        self._set_busy(self.active_workers > 0)
+        self._display_output(f"Error: {message}")
+        self._refresh_device_label()
+
+    def _display_output(self, text: str) -> None:
         self.output_box.append(text)
-        self.output_box.verticalScrollBar().setValue(self.output_box.verticalScrollBar().maximum())
+        scrollbar = self.output_box.verticalScrollBar()
+        scrollbar.setValue(scrollbar.maximum())
 
-    # ----------------- ADB Functions -----------------
-    def _get_permission(self):
-        self._start_progress()
-        result = self.adb.get_permission()
-        self._display_output("Device connected." if result else "No devices connected.")
+    def _refresh_device_label(self) -> None:
+        try:
+            devices = self.adb.get_devices()
+            ready = next((device for device in devices if device.ready), None)
+            self.device_label.setText(
+                f"Device: {ready.serial}"
+                if ready
+                else "Device: not connected"
+            )
+        except ADBError as exc:
+            self.device_label.setText(f"Device: error ({exc})")
 
-    def _is_there_any_sd(self):
-        self._start_progress()
-        result = self.adb.is_there_any_sd()
-        self._display_output("SD card found!" if result else "No SD card detected.")
+    def _get_device_status(self) -> None:
+        self._run(self._device_status_result)
 
-    def _storage_status(self):
-        self._start_progress()
-        result = self.adb.storage_status()
-        self._display_output(result)
+    def _device_status_result(self) -> str:
+        devices = self.adb.get_devices()
+        if not devices:
+            return "No devices detected."
+        return "\n".join(f"{device.serial}: {device.state}" for device in devices)
 
-    def _battery_status(self):
-        self._start_progress()
-        result = self.adb.battery_status()
-        self._display_output(result)
+    def _install_apk(self) -> None:
+        path, _ = QFileDialog.getOpenFileName(self, "Select APK", "", "APK Files (*.apk)")
+        if path:
+            self._run(lambda: self.adb.install_apk(path))
 
-    def _is_device_rooted(self):
-        self._start_progress()
-        result = self.adb.is_device_rooted()
-        self._display_output("Device is rooted." if result else "Device is not rooted.")
+    def _uninstall_app(self) -> None:
+        package, accepted = QInputDialog.getText(self, "Uninstall App", "Package name:")
+        if accepted and package.strip():
+            self._run(lambda: self.adb.uninstall_app(package))
 
-    def _reboot_device_to_bootloader(self):
-        self._start_progress(2000)
-        result = self.adb.reboot_device_to_bootloader()
-        self._display_output(result)
+    def _capture_screenshot(self) -> None:
+        path, _ = QFileDialog.getSaveFileName(self, "Save Screenshot", "screenshot.png", "PNG Files (*.png)")
+        if path:
+            self._run(lambda: self.adb.capture_screenshot(path))
 
-    def _reboot_device_to_recovery(self):
-        self._start_progress(2000)
-        result = self.adb.reboot_device_to_recovery()
-        self._display_output(result)
+    def _record_screen(self) -> None:
+        path, _ = QFileDialog.getSaveFileName(self, "Save Recording", "recording.mp4", "MP4 Files (*.mp4)")
+        if not path:
+            return
+        duration, accepted = QInputDialog.getInt(self, "Record Screen", "Duration (seconds):", 10, 1, 3600)
+        if accepted:
+            self._run(lambda: self.adb.record_screen(path, duration))
 
-    def _install_apk(self):
-        file_path, _ = QFileDialog.getOpenFileName(self, "Select APK File", "", "APK Files (*.apk)")
-        if file_path:
-            self._start_progress(2000)
-            result = self.adb.install_apk(file_path)
-            self._display_output(f"Installation result:\n{result}")
-
-    def _list_installed_apps(self):
-        self._start_progress()
-        result = self.adb.list_installed_apps()
-        self._display_output(result)
-
-    def _uninstall_app(self):
-        pkg_name, _ = QInputDialog.getText(self, "Uninstall App", "Package Name:")
-        if pkg_name:
-            self._start_progress()
-            result = self.adb.uninstall_app(pkg_name)
-            self._display_output(result)
-
-    def _capture_screenshot(self):
-        output_file, _ = QFileDialog.getSaveFileName(self, "Save Screenshot", "", "PNG Files (*.png)")
-        if output_file:
-            self._start_progress()
-            result = self.adb.capture_screenshot(output_file)
-            self._display_output(result)
-
-    def _record_screen(self):
-        output_file, _ = QFileDialog.getSaveFileName(self, "Save Recording", "", "MP4 Files (*.mp4)")
-        if output_file:
-            duration, _ = QInputDialog.getInt(self, "Duration", "Seconds:", 10, 1, 3600)
-            self._start_progress(duration*100)
-            result = self.adb.record_screen(output_file, duration)
-            self._display_output(result)
+    def closeEvent(self, event) -> None:  # noqa: N802 - Qt API
+        if self.active_workers:
+            QMessageBox.warning(self, "Operation in progress", "Wait for the current ADB operation to finish.")
+            event.ignore()
+            return
+        event.accept()
