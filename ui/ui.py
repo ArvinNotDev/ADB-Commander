@@ -9,7 +9,7 @@ import re
 from PyQt6.QtCore import QObject, QRunnable, Qt, QThreadPool, QTimer, pyqtSignal, pyqtSlot
 from PyQt6.QtGui import QColor, QFont, QLinearGradient, QPainter, QPen
 from PyQt6.QtWidgets import (
-    QAbstractItemView, QCheckBox, QComboBox, QDialog, QDialogButtonBox, QFileDialog,
+    QAbstractItemView, QComboBox, QDialog, QDialogButtonBox, QFileDialog,
     QFormLayout, QFrame, QGridLayout, QHBoxLayout, QHeaderView, QInputDialog, QLabel,
     QLineEdit, QMainWindow, QMessageBox, QProgressBar, QPushButton, QStackedWidget,
     QTableWidget, QTableWidgetItem, QTextEdit, QVBoxLayout, QWidget,
@@ -419,10 +419,24 @@ class ADBFastbootUI(QMainWindow):
             button.clicked.connect(callback)
             action_grid.addWidget(button, i // 2, i % 2)
         diag_layout.addLayout(action_grid)
-        wireless = QPushButton("Connect over Wi-Fi…")
-        wireless.setProperty("primary", True)
-        wireless.clicked.connect(self._connect_wireless)
-        diag_layout.addWidget(wireless)
+        wireless_title = QLabel("WIRELESS ADB")
+        wireless_title.setProperty("eyebrow", True)
+        diag_layout.addWidget(wireless_title)
+        wireless_hint = QLabel(
+            "Pair a new TV once, then use the separate connect action whenever you need to reconnect."
+        )
+        wireless_hint.setWordWrap(True)
+        wireless_hint.setProperty("muted", True)
+        diag_layout.addWidget(wireless_hint)
+        wireless_buttons = QHBoxLayout()
+        pair_button = QPushButton("Pair new device…")
+        pair_button.clicked.connect(self._pair_wireless)
+        connect_button = QPushButton("Connect paired device…")
+        connect_button.setProperty("primary", True)
+        connect_button.clicked.connect(self._connect_paired_wireless)
+        wireless_buttons.addWidget(pair_button)
+        wireless_buttons.addWidget(connect_button)
+        diag_layout.addLayout(wireless_buttons)
         row.addWidget(diag, 5)
         layout.addLayout(row, 1)
 
@@ -756,17 +770,18 @@ class ADBFastbootUI(QMainWindow):
         else:
             self._device_action(lambda a, s: a.reboot_device_to_recovery(s), "Reboot to recovery")
 
-    def _connect_wireless(self):
+    def _pair_wireless(self):
+        """Pair this computer with a new Android Wireless Debugging device."""
         dialog = QDialog(self)
-        dialog.setWindowTitle("Pair and connect over Wi-Fi")
-        dialog.setMinimumWidth(520)
+        dialog.setWindowTitle("Pair a new device")
+        dialog.setMinimumWidth(500)
         layout = QVBoxLayout(dialog)
         layout.setSpacing(12)
 
         guidance = QLabel(
-            "Android 11 Wireless Debugging uses two different ports. First open "
-            "'Pair device with pairing code' on the TV and enter that pairing address/code. "
-            "Then use the separate IP:port shown on the main Wireless Debugging screen."
+            "On the TV, open Developer options → Wireless debugging → "
+            "Pair device with pairing code. Enter the IP address and pairing port "
+            "from that pairing screen, plus its six-digit code."
         )
         guidance.setWordWrap(True)
         guidance.setProperty("muted", True)
@@ -777,28 +792,18 @@ class ADBFastbootUI(QMainWindow):
         pairing_endpoint = QLineEdit()
         pairing_endpoint.setPlaceholderText("TV IP and pairing port, e.g. 192.168.1.50:37123")
         pairing_code = QLineEdit()
-        pairing_code.setPlaceholderText("Six-digit code shown on the TV")
+        pairing_code.setPlaceholderText("Six-digit pairing code")
         pairing_code.setMaxLength(6)
-        connect_endpoint = QLineEdit()
-        connect_endpoint.setPlaceholderText("TV IP and debugging port, e.g. 192.168.1.50:42117")
+        pairing_code.setEchoMode(QLineEdit.EchoMode.Password)
+        pairing_code.setInputMethodHints(Qt.InputMethodHint.ImhDigitsOnly)
         form.addRow("Pairing address:port", pairing_endpoint)
         form.addRow("Pairing code", pairing_code)
-        form.addRow("Connection address:port", connect_endpoint)
         layout.addLayout(form)
-
-        already_paired = QCheckBox("This computer is already paired with this TV (connect only)")
-        layout.addWidget(already_paired)
-
-        def set_pairing_fields_enabled(enabled: bool):
-            pairing_endpoint.setEnabled(enabled)
-            pairing_code.setEnabled(enabled)
-
-        already_paired.toggled.connect(lambda checked: set_pairing_fields_enabled(not checked))
 
         buttons = QDialogButtonBox(
             QDialogButtonBox.StandardButton.Ok | QDialogButtonBox.StandardButton.Cancel
         )
-        buttons.button(QDialogButtonBox.StandardButton.Ok).setText("Pair & Connect")
+        buttons.button(QDialogButtonBox.StandardButton.Ok).setText("Pair device")
         buttons.accepted.connect(dialog.accept)
         buttons.rejected.connect(dialog.reject)
         layout.addWidget(buttons)
@@ -806,39 +811,81 @@ class ADBFastbootUI(QMainWindow):
         if dialog.exec() != QDialog.DialogCode.Accepted:
             return
 
-        endpoint = connect_endpoint.text().strip()
-        pair_endpoint = pairing_endpoint.text().strip()
+        endpoint = pairing_endpoint.text().strip()
         code = pairing_code.text().strip()
-        if not endpoint:
-            QMessageBox.warning(self, "Missing connection address", "Enter the IP address and connection port shown on the main Wireless Debugging screen.")
-            return
-        skip_pairing = already_paired.isChecked()
-        if not skip_pairing and (not pair_endpoint or not code):
-            QMessageBox.warning(self, "Pairing details required", "Enter the pairing address:port and six-digit code shown by 'Pair device with pairing code', or select 'connect only' if this computer was paired before.")
+        if not endpoint or not code:
+            QMessageBox.warning(
+                self,
+                "Pairing details required",
+                "Enter the pairing IP:port and six-digit code shown on the TV.",
+            )
             return
 
-        def pair_and_connect():
-            extras = self._get_extras()
-            if skip_pairing:
-                pair_result = "Pairing skipped (this computer was already paired)."
-            else:
-                pair_result = extras.pair_wireless(pair_endpoint, code)
-            try:
-                connect_result = extras.connect_wireless(endpoint)
-            except Exception as exc:
-                raise RuntimeError(
-                    str(pair_result) + "\n\nADB connection failed: " + str(exc)
-                ) from exc
-            return str(pair_result) + "\n" + str(connect_result)
-
-        def on_connected(result):
+        def on_paired(result):
             self._append_activity(str(result))
-            self._refresh_devices(quiet=False)
+            QMessageBox.information(
+                self,
+                "Pairing successful",
+                "This computer is now paired with the TV.\n\n"
+                "To connect, return to the main Wireless debugging screen on the TV, "
+                "note its current IP address and debugging port, then choose "
+                "'Connect paired device…' in ADB Commander.",
+            )
 
         self._run(
-            pair_and_connect,
-            "Pair and connect over Wi-Fi",
-            on_success=on_connected,
+            lambda: self._get_extras().pair_wireless(endpoint, code),
+            "Pair wireless device",
+            on_success=on_paired,
+        )
+
+    def _connect_paired_wireless(self):
+        """Connect to a device that this computer has already paired with."""
+        dialog = QDialog(self)
+        dialog.setWindowTitle("Connect to a paired device")
+        dialog.setMinimumWidth(500)
+        layout = QVBoxLayout(dialog)
+        layout.setSpacing(12)
+
+        guidance = QLabel(
+            "Use this for a TV that has already been paired with this computer. "
+            "On the TV, open the main Wireless debugging screen (not the pairing-code screen) "
+            "and enter the current IP address and debugging port shown there."
+        )
+        guidance.setWordWrap(True)
+        guidance.setProperty("muted", True)
+        layout.addWidget(guidance)
+
+        form = QFormLayout()
+        form.setFieldGrowthPolicy(QFormLayout.FieldGrowthPolicy.ExpandingFieldsGrow)
+        endpoint_input = QLineEdit()
+        endpoint_input.setPlaceholderText("TV IP and debugging port, e.g. 192.168.1.50:42117")
+        form.addRow("Connection address:port", endpoint_input)
+        layout.addLayout(form)
+
+        buttons = QDialogButtonBox(
+            QDialogButtonBox.StandardButton.Ok | QDialogButtonBox.StandardButton.Cancel
+        )
+        buttons.button(QDialogButtonBox.StandardButton.Ok).setText("Connect")
+        buttons.accepted.connect(dialog.accept)
+        buttons.rejected.connect(dialog.reject)
+        layout.addWidget(buttons)
+
+        if dialog.exec() != QDialog.DialogCode.Accepted:
+            return
+
+        endpoint = endpoint_input.text().strip()
+        if not endpoint:
+            QMessageBox.warning(
+                self,
+                "Connection address required",
+                "Enter the IP address and debugging port shown on the main Wireless debugging screen.",
+            )
+            return
+
+        self._run(
+            lambda: self._get_extras().connect_wireless(endpoint),
+            "Connect paired device",
+            on_success=lambda result: self._append_activity(str(result)),
         )
 
     def _show_logcat(self):
