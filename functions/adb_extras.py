@@ -14,18 +14,51 @@ class ADBExtras:
     def __init__(self, manager: ADBManager) -> None:
         self.adb = manager
 
-    def connect_wireless(self, endpoint: str) -> str:
-        """Connect ADB to an explicitly supplied host:port endpoint."""
+    @staticmethod
+    def _validate_wireless_endpoint(endpoint: str) -> str:
+        """Validate an ADB host:port endpoint and return its normalized value."""
         endpoint = endpoint.strip()
-        match = re.fullmatch(r"(?:[A-Za-z0-9.-]+|\[[0-9A-Fa-f:]+\]):([0-9]{1,5})", endpoint)
+        match = re.fullmatch(r"(?:[A-Za-z0-9.-]+|\\[[0-9A-Fa-f:]+\\]):([0-9]{1,5})", endpoint)
         if not match:
-            raise ValueError("Enter a valid host and debugging port, e.g. 192.168.1.45:5555.")
+            raise ValueError("Enter a valid host and port, e.g. 192.168.1.45:37123.")
         port = int(match.group(1))
         if not 1 <= port <= 65535:
-            raise ValueError("The debugging port must be between 1 and 65535.")
+            raise ValueError("The port must be between 1 and 65535.")
+        return endpoint
+
+    def pair_wireless(self, endpoint: str, pairing_code: str) -> str:
+        """Pair this computer with Android 11+ wireless debugging using its pairing port."""
+        endpoint = self._validate_wireless_endpoint(endpoint)
+        pairing_code = pairing_code.strip()
+        if not re.fullmatch(r"[0-9]{6}", pairing_code):
+            raise ValueError("Enter the six-digit pairing code shown by Android Wireless Debugging.")
+
+        result = self.adb._run(["pair", endpoint, pairing_code], timeout=30, check=False)
+        output = (result.stdout or result.stderr).strip()
+        lowered = output.lower()
+        if result.returncode != 0 or any(
+            marker in lowered
+            for marker in ("failed:", "failed to", "cannot pair", "unable to pair", "error:")
+        ):
+            if "unknown command" in lowered or "not recognized" in lowered:
+                raise ADBError(
+                    "This ADB version does not support wireless pairing. Update Android SDK Platform-Tools, "
+                    "then restart ADB Commander."
+                )
+            raise ADBError(output or "ADB could not pair with the wireless debugging endpoint.")
+        return output or ("ADB pairing completed for " + endpoint)
+
+    def connect_wireless(self, endpoint: str) -> str:
+        """Connect ADB to an explicitly supplied wireless-debugging host:port endpoint."""
+        endpoint = self._validate_wireless_endpoint(endpoint)
         result = self.adb._run(["connect", endpoint], timeout=15, check=False)
         output = (result.stdout or result.stderr).strip()
-        if result.returncode != 0 or output.lower().startswith("failed to connect"):
+        lowered = output.lower()
+        if result.returncode != 0 or any(
+            marker in lowered
+            for marker in ("failed to connect", "cannot connect", "unable to connect", "connection refused",
+                           "no route to host", "failed:")
+        ):
             raise ADBError(output or "ADB could not connect to the wireless endpoint.")
         return output or ("ADB connection requested for " + endpoint)
 
