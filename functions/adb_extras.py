@@ -18,7 +18,7 @@ class ADBExtras:
     def _validate_wireless_endpoint(endpoint: str) -> str:
         """Validate an ADB host:port endpoint and return its normalized value."""
         endpoint = endpoint.strip()
-        match = re.fullmatch(r"(?:[A-Za-z0-9.-]+|\\[[0-9A-Fa-f:]+\\]):([0-9]{1,5})", endpoint)
+        match = re.fullmatch(r"(?:[A-Za-z0-9.-]+|\[[0-9A-Fa-f:]+\]):([0-9]{1,5})", endpoint)
         if not match:
             raise ValueError("Enter a valid host and port, e.g. 192.168.1.45:37123.")
         port = int(match.group(1))
