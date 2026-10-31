@@ -38,6 +38,15 @@ def test_wireless_pair_uses_pair_command_and_code(extras: ADBExtras) -> None:
     assert command[-3:] == ["pair", "192.168.1.5:37123", "123456"]
 
 
+def test_wireless_connect_uses_connect_command_and_endpoint(extras: ADBExtras) -> None:
+    with patch("subprocess.run", return_value=completed("connected to 192.168.1.5:42117")) as run:
+        output = extras.connect_wireless("192.168.1.5:42117")
+
+    assert "connected to" in output
+    command = run.call_args.args[0]
+    assert command[-2:] == ["connect", "192.168.1.5:42117"]
+
+
 def test_wireless_pair_rejects_invalid_code_before_running_adb(extras: ADBExtras) -> None:
     with patch("subprocess.run") as run:
         with pytest.raises(ValueError, match="six-digit"):
