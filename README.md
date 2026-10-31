@@ -104,7 +104,24 @@ python -m functions.adb_commands
 3. Unlock the phone and accept the computer's RSA authorization prompt.
 4. Open ADB Commander and select the device from the top-right device picker.
 
-For wireless debugging, enable the appropriate debugging option on the phone and use **Device → Connect over Wi-Fi** with the address and port shown by Android. The phone and computer generally need to be reachable on the same network. Available ports vary with the Android wireless-debugging mode.
+For Android 11+ **Wireless Debugging** pairing-code mode, ADB Commander keeps pairing and connecting as two separate actions:
+
+**Pair a new device (one-time per computer/device pairing):**
+
+1. Keep the Android device and computer on the same trusted Wi-Fi network.
+2. On Android, open **Developer options → Wireless debugging → Pair device with pairing code**.
+3. In ADB Commander, open **Device → Pair new device…**.
+4. Enter the pairing `IP:port` and six-digit code shown by the pairing dialog. ADB Commander runs `adb pair` only.
+
+**Connect to a device that was already paired:**
+
+1. Return to the main **Wireless debugging** screen on Android (not the pairing-code screen).
+2. In ADB Commander, open **Device → Connect paired device…**.
+3. Enter the current connection `IP:port`. ADB Commander runs `adb connect` and refreshes the device list.
+
+The pairing port and connection port are different; never reuse the pairing port for the final connection. The connection port can change, so read its current value from the main Wireless Debugging screen. Pairing is normally remembered by Android for subsequent connections from the same computer.
+
+Older ADB-over-TCP mode (where Android exposes a single debugging port and no pairing-code screen) can use **Connect paired device…** directly. Device and computer must be mutually reachable on the same trusted network. Disable Wireless Debugging when it is no longer needed.
 
 ## Tests
 

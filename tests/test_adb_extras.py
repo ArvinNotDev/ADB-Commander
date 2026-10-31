@@ -29,6 +29,43 @@ def test_wireless_endpoint_rejects_missing_port(extras: ADBExtras) -> None:
         extras.connect_wireless("192.168.1.5")
 
 
+def test_wireless_pair_uses_pair_command_and_code(extras: ADBExtras) -> None:
+    with patch("subprocess.run", return_value=completed("Successfully paired to 192.168.1.5:37123 [guid=abc]")) as run:
+        output = extras.pair_wireless("192.168.1.5:37123", "123456")
+
+    assert "Successfully paired" in output
+    command = run.call_args.args[0]
+    assert command[-3:] == ["pair", "192.168.1.5:37123", "123456"]
+
+
+def test_wireless_connect_uses_connect_command_and_endpoint(extras: ADBExtras) -> None:
+    with patch("subprocess.run", return_value=completed("connected to 192.168.1.5:42117")) as run:
+        output = extras.connect_wireless("192.168.1.5:42117")
+
+    assert "connected to" in output
+    command = run.call_args.args[0]
+    assert command[-2:] == ["connect", "192.168.1.5:42117"]
+
+
+def test_wireless_pair_rejects_invalid_code_before_running_adb(extras: ADBExtras) -> None:
+    with patch("subprocess.run") as run:
+        with pytest.raises(ValueError, match="six-digit"):
+            extras.pair_wireless("192.168.1.5:37123", "12345")
+    run.assert_not_called()
+
+
+def test_wireless_pair_surfaces_pairing_failure_even_when_adb_returns_zero(extras: ADBExtras) -> None:
+    with patch("subprocess.run", return_value=completed(stdout="Failed: Incorrect pairing code")):
+        with pytest.raises(Exception, match="Incorrect pairing code"):
+            extras.pair_wireless("192.168.1.5:37123", "123456")
+
+
+def test_wireless_connect_detects_refused_connection_even_when_adb_returns_zero(extras: ADBExtras) -> None:
+    with patch("subprocess.run", return_value=completed(stdout="cannot connect to 192.168.1.5:42117: Connection refused")):
+        with pytest.raises(Exception, match="Connection refused"):
+            extras.connect_wireless("192.168.1.5:42117")
+
+
 def test_shell_command_requires_content(extras: ADBExtras) -> None:
     with pytest.raises(ValueError, match="Enter a command"):
         extras.execute_shell("   ")
