@@ -812,13 +812,14 @@ class ADBFastbootUI(QMainWindow):
         if not endpoint:
             QMessageBox.warning(self, "Missing connection address", "Enter the IP address and connection port shown on the main Wireless Debugging screen.")
             return
-        if not already_paired.isChecked() and (not pair_endpoint or not code):
+        skip_pairing = already_paired.isChecked()
+        if not skip_pairing and (not pair_endpoint or not code):
             QMessageBox.warning(self, "Pairing details required", "Enter the pairing address:port and six-digit code shown by 'Pair device with pairing code', or select 'connect only' if this computer was paired before.")
             return
 
         def pair_and_connect():
             extras = self._get_extras()
-            if already_paired.isChecked():
+            if skip_pairing:
                 pair_result = "Pairing skipped (this computer was already paired)."
             else:
                 pair_result = extras.pair_wireless(pair_endpoint, code)
@@ -826,9 +827,9 @@ class ADBFastbootUI(QMainWindow):
                 connect_result = extras.connect_wireless(endpoint)
             except Exception as exc:
                 raise RuntimeError(
-                    str(pair_result) + "\\n\\nPairing succeeded, but the ADB connection failed: " + str(exc)
+                    str(pair_result) + "\n\nADB connection failed: " + str(exc)
                 ) from exc
-            return str(pair_result) + "\\n" + str(connect_result)
+            return str(pair_result) + "\n" + str(connect_result)
 
         def on_connected(result):
             self._append_activity(str(result))
