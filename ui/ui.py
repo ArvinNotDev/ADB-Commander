@@ -9,10 +9,10 @@ import re
 from PyQt6.QtCore import QObject, QRunnable, Qt, QThreadPool, QTimer, pyqtSignal, pyqtSlot
 from PyQt6.QtGui import QColor, QFont, QLinearGradient, QPainter, QPen
 from PyQt6.QtWidgets import (
-    QAbstractItemView, QComboBox, QFileDialog, QFrame, QGridLayout, QHBoxLayout,
-    QHeaderView, QInputDialog, QLabel, QLineEdit, QMainWindow, QMessageBox,
-    QProgressBar, QPushButton, QStackedWidget, QTableWidget, QTableWidgetItem,
-    QTextEdit, QVBoxLayout, QWidget,
+    QAbstractItemView, QCheckBox, QComboBox, QDialog, QDialogButtonBox, QFileDialog,
+    QFormLayout, QFrame, QGridLayout, QHBoxLayout, QHeaderView, QInputDialog, QLabel,
+    QLineEdit, QMainWindow, QMessageBox, QProgressBar, QPushButton, QStackedWidget,
+    QTableWidget, QTableWidgetItem, QTextEdit, QVBoxLayout, QWidget,
 )
 
 from functions.adb_commands import ADBManager
@@ -757,9 +757,88 @@ class ADBFastbootUI(QMainWindow):
             self._device_action(lambda a, s: a.reboot_device_to_recovery(s), "Reboot to recovery")
 
     def _connect_wireless(self):
-        endpoint, accepted = QInputDialog.getText(self, "Connect over Wi-Fi", "Device IP and debugging port (example: 192.168.1.45:5555):")
-        if accepted and endpoint.strip():
-            self._run(lambda: self._get_extras().connect_wireless(endpoint.strip()), "Connect over Wi-Fi", on_success=lambda result: self._append_activity(str(result)))
+        dialog = QDialog(self)
+        dialog.setWindowTitle("Pair and connect over Wi-Fi")
+        dialog.setMinimumWidth(520)
+        layout = QVBoxLayout(dialog)
+        layout.setSpacing(12)
+
+        guidance = QLabel(
+            "Android 11 Wireless Debugging uses two different ports. First open "
+            "'Pair device with pairing code' on the TV and enter that pairing address/code. "
+            "Then use the separate IP:port shown on the main Wireless Debugging screen."
+        )
+        guidance.setWordWrap(True)
+        guidance.setProperty("muted", True)
+        layout.addWidget(guidance)
+
+        form = QFormLayout()
+        form.setFieldGrowthPolicy(QFormLayout.FieldGrowthPolicy.ExpandingFieldsGrow)
+        pairing_endpoint = QLineEdit()
+        pairing_endpoint.setPlaceholderText("TV IP and pairing port, e.g. 192.168.1.50:37123")
+        pairing_code = QLineEdit()
+        pairing_code.setPlaceholderText("Six-digit code shown on the TV")
+        pairing_code.setMaxLength(6)
+        connect_endpoint = QLineEdit()
+        connect_endpoint.setPlaceholderText("TV IP and debugging port, e.g. 192.168.1.50:42117")
+        form.addRow("Pairing address:port", pairing_endpoint)
+        form.addRow("Pairing code", pairing_code)
+        form.addRow("Connection address:port", connect_endpoint)
+        layout.addLayout(form)
+
+        already_paired = QCheckBox("This computer is already paired with this TV (connect only)")
+        layout.addWidget(already_paired)
+
+        def set_pairing_fields_enabled(enabled: bool):
+            pairing_endpoint.setEnabled(enabled)
+            pairing_code.setEnabled(enabled)
+
+        already_paired.toggled.connect(lambda checked: set_pairing_fields_enabled(not checked))
+
+        buttons = QDialogButtonBox(
+            QDialogButtonBox.StandardButton.Ok | QDialogButtonBox.StandardButton.Cancel
+        )
+        buttons.button(QDialogButtonBox.StandardButton.Ok).setText("Pair & Connect")
+        buttons.accepted.connect(dialog.accept)
+        buttons.rejected.connect(dialog.reject)
+        layout.addWidget(buttons)
+
+        if dialog.exec() != QDialog.DialogCode.Accepted:
+            return
+
+        endpoint = connect_endpoint.text().strip()
+        pair_endpoint = pairing_endpoint.text().strip()
+        code = pairing_code.text().strip()
+        if not endpoint:
+            QMessageBox.warning(self, "Missing connection address", "Enter the IP address and connection port shown on the main Wireless Debugging screen.")
+            return
+        if not already_paired.isChecked() and (not pair_endpoint or not code):
+            QMessageBox.warning(self, "Pairing details required", "Enter the pairing address:port and six-digit code shown by 'Pair device with pairing code', or select 'connect only' if this computer was paired before.")
+            return
+
+        def pair_and_connect():
+            extras = self._get_extras()
+            if already_paired.isChecked():
+                pair_result = "Pairing skipped (this computer was already paired)."
+            else:
+                pair_result = extras.pair_wireless(pair_endpoint, code)
+            try:
+                connect_result = extras.connect_wireless(endpoint)
+            except Exception as exc:
+                raise RuntimeError(
+                    str(pair_result) + "\\n\\nPairing succeeded, but the ADB connection failed: " + str(exc)
+                ) from exc
+            return str(pair_result) + "\\n" + str(connect_result)
+
+        def on_connected(result):
+            self._append_activity(str(result))
+            self._refresh_devices(quiet=False)
+
+        self._run(
+            pair_and_connect,
+            "Pair and connect over Wi-Fi",
+            on_success=on_connected,
+        )
 
     def _show_logcat(self):
         serial = self._selected_serial()
